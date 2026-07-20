@@ -113,6 +113,37 @@
   #startBtn:hover{filter:brightness(1.1);}
   #hint{font-size:11px; color:var(--dim); margin-top:4px; text-align:center; min-height:16px;}
   #hint.selmode{color:var(--accent2); font-weight:bold;}
+  /* チュートリアル: 未解禁ボタン */
+  .tool:disabled{opacity:.28; cursor:not-allowed;}
+  .tool.flash{animation:toolFlash .8s ease 3;}
+  @keyframes toolFlash{
+    0%,100%{border-color:var(--border); box-shadow:none;}
+    50%{border-color:var(--accent2); box-shadow:0 0 14px rgba(255,179,71,.6);}
+  }
+  /* スタッフロール */
+  #creditsBox{height:180px; overflow:hidden; position:relative; margin:6px 0;
+    border-top:1px solid var(--border); border-bottom:1px solid var(--border);}
+  #creditsInner{position:absolute; width:100%; font-size:12px; line-height:2.0;
+    animation:creditsRoll 34s linear forwards;}
+  #creditsInner h3{color:var(--accent); font-size:13px; margin-top:16px; letter-spacing:2px;}
+  #creditsInner .role{color:var(--dim); font-size:10px;}
+  @keyframes creditsRoll{from{top:180px;} to{top:-760px;}}
+  /* タッチ・モバイル対応 */
+  button{touch-action:manipulation;}
+  canvas#cv{touch-action:manipulation;}
+  @media (max-width:640px){
+    body{padding:6px;}
+    h1{font-size:13px;}
+    #hud{gap:8px; padding:5px 8px;}
+    .hudBlock{min-width:80px;}
+    .bar{width:90px;}
+    .tool{padding:10px 6px; font-size:12px;}
+    .bigBtn{font-size:14px; padding:12px 4px;}
+    #maoText{font-size:12px;}
+    #maoFace{width:56px; height:56px;}
+    #log{height:70px; font-size:11px;}
+    #overlayBox{padding:18px 14px; font-size:12px; max-width:94vw;}
+  }
 </style>
 </head>
 <body>
@@ -141,6 +172,7 @@
       <span id="stageVal" style="font-size:11px">…</span>
     </div>
     <button id="speedBtn">▶ 速度 x1</button>
+    <button id="soundBtn" style="background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 10px;cursor:pointer;font-size:12px;">🔊</button>
   </div>
   <div id="cvBox">
     <canvas id="cv" width="800" height="544"></canvas>
@@ -299,6 +331,7 @@ WALL_HITS[W_SOFT]=1; WALL_HITS[W_PLAYER]=1; WALL_HITS[W_BRICK]=2; WALL_HITS[W_RO
 let wall, wallDmg, hazard, bonfires, cage, throne, items, monsters, hero, heroStart;
 let mp, mpT, tool, selMonster, state, logEl, floatTexts, effects, timeSec, speedMul, mouseCell;
 let shakeT = 0, maoAmbT = 20, poisonSpread = 0;
+let tut = {active:false}, maoOnce = {}, visited = null, lastProgressT = 0, poisonStreak = 0;
 const MP_MAX=40, MP_REGEN_SEC=4, MP_KILL_BONUS=2;
 
 const MON_ATK_NAMES = {
@@ -383,9 +416,66 @@ function initGame(stageIdx, carry){
   log('sys','―― '+st.name+'。観察開始。');
   say(st.heroSay);
   maoSay(st.introMao[0], st.introMao[1]);
+  // チュートリアル(1面の初回のみ段階解禁)
+  if(curStage===0 && !carry){
+    tut={active:true, t:0, hinted:false, dig:false, orb:false, potion:false, wall:false, mon:false};
+  } else {
+    tut={active:false, dig:true, orb:true, potion:true, wall:true, mon:true};
+  }
+  maoOnce={}; visited=new Set(); lastProgressT=0; poisonStreak=0;
+  updateToolButtons();
   setBattleUI(false);
   setHint();
   updateHUD();
+}
+const TUT_LABELS={dig:'壁を壊す',orb:'経験値',potion:'回復アイテム',wall:'壁をつくる',mon:'魔物の配置転換'};
+function tutUnlocked(key){ return !tut.active || tut[key]; }
+function updateToolButtons(){
+  document.querySelectorAll('.tool').forEach(b=>{
+    b.disabled = !tutUnlocked(b.dataset.tool);
+  });
+}
+function unlockTut(key,msg){
+  if(tut[key]) return;
+  tut[key]=true;
+  updateToolButtons();
+  maoSay('blush','【解禁】'+msg);
+  log('good','◆ 魔王の力が解禁: '+TUT_LABELS[key]);
+  const btn=document.querySelector('.tool[data-tool="'+key+'"]');
+  if(btn){ btn.classList.add('flash'); setTimeout(()=>btn.classList.remove('flash'),2600); }
+  beep(880,.1,'sine'); beep(1100,.12,'sine');
+  if(tut.dig&&tut.orb&&tut.potion&&tut.wall&&tut.mon) tut.active=false;
+}
+function tutorialUpdate(dt){
+  if(!tut.active) return;
+  tut.t+=dt;
+  if(!tut.hinted && tut.t>2.5){
+    tut.hinted=true;
+    maoSay('normal','まずは勇者本人をクリックしてみなさい。"それとなく"気を引いて進む方向を変えられるわ。');
+  }
+  if(!tut.dig && tut.t>10)
+    unlockTut('dig','壁は直接クリックで壊せるの(1pt/打)。木箱やレンガを崩して道を変えてみなさい。');
+  if(!tut.potion && hero.hp<hero.maxhp*0.7)
+    unlockTut('potion','「回復アイテム」よ。勇者の通り道に置いておけば勝手に飲むわ。');
+  if(!tut.wall && tut.t>45){
+    unlockTut('wall','「壁をつくる」解禁。進ませたくない道を塞ぎなさい。');
+    unlockTut('mon','ついでに魔物の配置転換も解禁。魔物クリック→行き先クリックよ。');
+  }
+}
+/* 状況依存のリリスのつぶやき */
+function maoSituational(){
+  const trySay=(k,cd,mood,txt)=>{
+    if(maoOnce[k]!==undefined && timeSec-maoOnce[k]<cd) return;
+    maoOnce[k]=timeSec; maoSay(mood,txt);
+  };
+  if(mp<=1)
+    trySay('mpout',90,'sad','力を使いすぎたわ…。回復するまで、見てることしかできないじゃない…。');
+  if(hero.mode!=='rest'&&hero.mode!=='dead'&&hero.mode!=='battle'&&hero.hp<hero.maxhp*0.3)
+    trySay('lowhp',60,'sad','ちょっと、HPやばいじゃない!篝火!篝火に戻りなさいってば!');
+  if(hero.mode==='explore'&&timeSec-lastProgressT>25){
+    trySay('lost',60,'angry','……さっきから同じ場所ぐるぐる回ってない?方向音痴なの?ほら、手を貸すわよ。');
+    lastProgressT=timeSec;
+  }
 }
 function buildPatrol(m){
   if(m.ai!=='patrol'){ m.patrol=null; return; }
@@ -511,19 +601,67 @@ const MAO_AMBIENT = [
   ['angry','手下ども、張り切りすぎなのよ!空気を読みなさい空気を!'],
   ['normal','迷ってるじゃない。地図くらい持ってきなさいよね、まったく…。'],
   ['blush','会ったら何て言おうかしら。……ち、違うわよ!?決闘の口上の話よ!'],
-  ['normal','この城、我ながら意地悪な造りしてるわね。誰よ設計したの。私だわ。']
+  ['normal','この城、我ながら意地悪な造りしてるわね。誰よ設計したの。私だわ。'],
+  ['normal','観察日記、今日で何ページ目かしら。…数えてないけど。三百二十四ページ目よ。'],
+  ['blush','歩き方に癖があるのよね、あんた。右の壁ばっかり触るの。……見てないけど。'],
+  ['angry','石の在庫が減ってきたわ。誰よこんなに投げたの。私だわ。'],
+  ['normal','魔王城の修繕費、今月もすごいことになりそう…。壁、壊しすぎたかしら。'],
+  ['blush','勇者が来たら出すお茶、もう選んであるの。…に、荷物整理のついでよ!?'],
+  ['normal','ミラ…あの僧侶、回復のたびに勇者に近いのよね。近くない?ねえ、近いわよね?'],
+  ['angry','ガーゴイル卿から「主命とは」という手紙が来たわ。長いのよ、忠義が。'],
+  ['normal','たまには私も冒険したいわね。…魔王が城を出たら、それはもう家出だけど。']
 ];
 
 /* ---------- audio ---------- */
-let AC=null;
-function beep(freq,dur,type,vol){
+let AC=null, masterGain=null, soundOn=true;
+function ensureAudio(){
+  if(!AC) AC=new (window.AudioContext||window.webkitAudioContext)();
+  if(!masterGain){
+    masterGain=AC.createGain();
+    masterGain.gain.value=soundOn?1:0;
+    masterGain.connect(AC.destination);
+  }
+  if(AC.state==='suspended') AC.resume();
+}
+function tone(freq,dur,type,vol){
   try{
-    if(!AC) AC=new (window.AudioContext||window.webkitAudioContext)();
+    ensureAudio();
     const o=AC.createOscillator(), gn=AC.createGain();
     o.type=type||'square'; o.frequency.value=freq;
     gn.gain.setValueAtTime(vol||0.04,AC.currentTime);
     gn.gain.exponentialRampToValueAtTime(0.0001,AC.currentTime+(dur||0.1));
-    o.connect(gn); gn.connect(AC.destination); o.start(); o.stop(AC.currentTime+(dur||0.1));
+    o.connect(gn); gn.connect(masterGain); o.start(); o.stop(AC.currentTime+(dur||0.1));
+  }catch(e){}
+}
+function beep(freq,dur,type,vol){ tone(freq,dur,type,vol); }
+/* BGM: ステージ別チップチューンループ */
+const midiF=n=>440*Math.pow(2,(n-69)/12);
+const BGM_SET=[
+  {t:170, bass:[45,45,48,48,43,43,45,45],
+   lead:[69,72,76,74, 72,69,71,72, 67,71,74,72, 71,69,67,69]},
+  {t:205, bass:[38,38,41,41,36,36,38,38],
+   lead:[62,0,65,62, 60,0,58,60, 62,0,65,69, 67,65,62,60]},
+  {t:145, bass:[40,40,41,41,40,40,38,38],
+   lead:[64,65,64,62, 64,67,64,62, 64,65,64,60, 59,60,62,64]}
+];
+const BGM={timer:null, step:0};
+function bgmStart(){
+  try{
+    ensureAudio();
+    if(BGM.timer) clearInterval(BGM.timer);
+    BGM.step=0;
+    const pat=BGM_SET[curStage]||BGM_SET[0];
+    BGM.timer=setInterval(()=>{
+      if(state!=='play'&&state!=='wait') return;
+      if(!soundOn) return;
+      const s=BGM.step++;
+      const L=pat.lead[s%16];
+      if(L) tone(midiF(L),0.16,'square',0.012);
+      if(s%2===0){
+        const B=pat.bass[Math.floor(s/2)%8];
+        if(B) tone(midiF(B),0.3,'triangle',0.028);
+      }
+    }, pat.t);
   }catch(e){}
 }
 
@@ -535,6 +673,8 @@ function applyHazard(){
   if(hz==='poison'){ dmg=6; nm='毒の沼';
     addFx({kind:'ring',x:hero.px,y:hero.py,t:0,dur:.35,color:'#9ad03a'});
     if(Math.random()<0.4) say('うっ、足が…');
+    poisonStreak++;
+    if(poisonStreak===3) maoSay('angry','だから毒の上を歩き続けるなって言ってるでしょ!?回り道しなさいよ!');
   } else if(hz==='pend'){ dmg=10; nm='振り子の刃';
     addFx({kind:'slash',x:hero.px,y:hero.py-6,t:0,dur:.3,color:'#d8d8e0'});
     shake(5); say('危なっ…!');
@@ -551,6 +691,10 @@ function applyHazard(){
 }
 function heroEnterCell(){
   const r=hero.r, c=hero.c;
+  // 進捗トラッキング(停滞セリフ用)
+  const vk=r+','+c;
+  if(visited && !visited.has(vk)){ visited.add(vk); lastProgressT=timeSec; }
+  if(hazard[r][c]!=='poison') poisonStreak=0;
   // 玉座(STAGE3ゴール)
   if(throne && r===throne.r && c===throne.c){ winGame(); return; }
   // 罠・毒
@@ -862,6 +1006,11 @@ function battleUpdate(dt){
   const mon=b.mon;
   const mx=mon.px, my=mon.py, hx=hero.px, hy=hero.py;
   if(b.phase==='hero'){
+    b.rounds=(b.rounds||0)+1;
+    if(b.rounds===6&&!b.saidLong){
+      b.saidLong=true;
+      maoSay('angry','長引いてるわね…。石でも投げて加勢しちゃおうかしら。');
+    }
     const art=b.art;
     let dmg=(hero.atk+(hero.companion?hero.companion.atk:0))*art.mult*(0.85+Math.random()*0.3);
     dmg=Math.max(1,Math.round(dmg));
@@ -922,7 +1071,8 @@ function killMonster(mon,byStone){
     log('good','ゆうしゃ は '+mon.name+' を たおした!(EXP +'+mon.exp+' / 魂が還り魔王の力+'+MP_KILL_BONUS+')');
   }
   beep(660,.1,'sine');
-  if(Math.random()<0.4) maoSay('happy','そうそう、その調子よ。……ふふ、強くなったじゃない。');
+  if(tut.active&&!tut.orb) unlockTut('orb','「経験値」よ。珠を置けば勇者が勝手に拾って育つわ。餌付けとも言う。');
+  else if(Math.random()<0.4) maoSay('happy','そうそう、その調子よ。……ふふ、強くなったじゃない。');
   if(mon.boss){ winGame(); return; }
   endBattle(); hero.mode='explore'; hero.path=[];
   updateHUD();
@@ -1028,6 +1178,7 @@ function winGame(){
   if(curStage===0){
     maoSay('blush','き、来たわね……って、まだここじゃないんだけど!');
     showOverlay('🏰 玉座の間…?',
+      starHtml()+
       '<span class="serif">扉の奥――玉座はもぬけの殻。奥へと、地下へ続く階段が口を開けている。<br><br>'+
       'リリス「こ、ここじゃないわよ!本当の玉座は地下なんだから!<br>'+
       'ふん、ここまで来られたのは…み、認めてあげてもいいけど?」</span><br><br>'+
@@ -1038,6 +1189,7 @@ function winGame(){
   } else if(curStage===1){
     maoSay('blush','じ、地下も抜けたの!?……いよいよ、私の城ね。');
     showOverlay('🕳 地下大迷宮 踏破',
+      starHtml()+
       '<span class="serif">毒の沼を越え、真・ガーゴイル卿も膝をついた。<br>階段の先には――魔王の城がそびえ立つ。<br><br>'+
       'リリス「言っておくけど、城は罠だらけよ。<br>私が仕掛けたんじゃないわ、代々のしきたりなの!<br>…け、怪我しないでよね」</span><br><br>'+
       resultStats(),
@@ -1046,14 +1198,33 @@ function winGame(){
       'castle');
   } else {
     maoSay('happy','……!');
+    const credits =
+      '<div id="creditsBox"><div id="creditsInner">'+
+      '<span class="serif">リリス「お、遅かったじゃない…!べ、別に待ってたわけじゃないんだから!<br>'+
+      '……。……お茶、飲んでいきなさいよ。逃がさないから」</span><br>'+
+      '勇者「(魔王討伐のはずが、なぜかお茶会が始まった)」<br>'+
+      '☕ ― お茶会スタート ―<br>'+
+      '<h3>― 観察記録 総括 ―</h3>'+
+      starHtml()+resultStats()+
+      '<h3>― キャスト ―</h3>'+
+      '勇者 <span class="role">(朴念仁)</span><br>'+
+      '魔王リリス <span class="role">(ツンデレ)</span><br>'+
+      '僧侶ミラ <span class="role">(距離が近い)</span><br>'+
+      'ガーゴイル卿 <span class="role">(忠義)</span><br>'+
+      '真・ガーゴイル卿 <span class="role">(もっと忠義)</span><br>'+
+      'ダークゴースト <span class="role">(玉座前、最後の良心)</span><br>'+
+      'ポイズントード <span class="role">(環境破壊)</span><br>'+
+      'スライムたち <span class="role">(経験値)</span><br>'+
+      '<h3>― スタッフ ―</h3>'+
+      '企画・レベルデザイン: 魔王リリス<br>'+
+      '罠設計: 先代魔王 <span class="role">(しきたり)</span><br>'+
+      '篝火設置: 魔王リリス <span class="role">(徹夜)</span><br>'+
+      '特別協力: 石 <span class="role">(たくさん)</span><br>'+
+      '<h3></h3><span class="serif">「――ありがとう。<br>……ま、また観察させなさいよね。」</span><br><br>'+
+      '― 完 ―'+
+      '</div></div>';
     showOverlay('🏰 真・玉座の間にて',
-      '<span class="serif">最後の扉が開く。玉座には、頬を染めてそっぽを向く魔王がひとり。<br><br>'+
-      'リリス「お、遅かったじゃない…!べ、別に待ってたわけじゃないんだから!<br>'+
-      '手下が勝手に弱かっただけよ!?罠も勝手に外れてたし!<br>'+
-      '……。……お茶、飲んでいきなさいよ。逃がさないから」<br><br>'+
-      '勇者「(魔王討伐のはずが、なぜかお茶会が始まった)」<br><br>'+
-      '☕ ― お茶会スタート。完 ―</span><br><br>'+
-      resultStats(),
+      credits,
       'はじめから観察する',
       ()=>initGame(0,null),
       'tea');
@@ -1062,6 +1233,29 @@ function winGame(){
 function resultStats(){
   return '<b>― 観察記録 ―</b><br>時間: '+Math.floor(timeSec/60)+'分'+Math.floor(timeSec%60)+'秒 / '+
     '到達Lv: '+hero.lv+' / 死亡: '+hero.deaths+'回 / 残った魔王の力: '+mp+'pt';
+}
+/* 星評価: ノーデス / タイム / 魔王の力温存 */
+function calcStars(){
+  const timeTarget=[300,390,420][curStage]||300;
+  const crit=[
+    ['ノーデス', hero.deaths===0],
+    ['タイム'+Math.floor(timeTarget/60)+'分'+(timeTarget%60? timeTarget%60+'秒':'')+'以内', timeSec<timeTarget],
+    ['魔王の力を8pt以上残す', mp>=8]
+  ];
+  return {n:Math.max(1,crit.filter(c=>c[1]).length), crit};
+}
+function starHtml(){
+  const s=calcStars();
+  let best=0;
+  try{
+    best=+localStorage.getItem('yk_best_'+curStage)||0;
+    if(s.n>best){ localStorage.setItem('yk_best_'+curStage, s.n); best=s.n; }
+  }catch(e){ best=s.n; }
+  return '<div style="font-size:24px;letter-spacing:5px;color:#ffd75a;margin:2px 0">'+
+    '★'.repeat(s.n)+'<span style="color:#4a3a6e">'+'★'.repeat(3-s.n)+'</span></div>'+
+    '<span style="font-size:11px;color:var(--dim)">'+
+    s.crit.map(c=>(c[1]?'○ ':'× ')+c[0]).join(' / ')+
+    ' (自己ベスト ★'+best+')</span><br>';
 }
 function showOverlay(title,html,btnText,action,scene){
   const ov=document.getElementById('overlay');
@@ -1074,6 +1268,7 @@ function showOverlay(title,html,btnText,action,scene){
   document.getElementById('startBtn').onclick=()=>{
     ov.style.display='none';
     (action || (()=>initGame(curStage,lastCarry)))();
+    bgmStart();
   };
 }
 /* ステージクリア等の補足ビジュアル(ローポリ一枚絵) */
@@ -1200,6 +1395,7 @@ function drawScene(p,kind){
 /* ---------- player interaction ---------- */
 const COSTS={orb:3,potion:2,dig:1,mon:3,wall:2};
 function setTool(t){
+  if(t && !tutUnlocked(t)) return;
   if(tool===t) t=null;
   tool=t; deselectMonster();
   document.querySelectorAll('.tool').forEach(b=>b.classList.toggle('sel',b.dataset.tool===t));
@@ -1222,6 +1418,11 @@ document.getElementById('btnHeal').addEventListener('click',castHeal);
 document.getElementById('speedBtn').addEventListener('click',()=>{
   speedMul=speedMul===1?2:1;
   document.getElementById('speedBtn').textContent='▶ 速度 x'+speedMul;
+});
+document.getElementById('soundBtn').addEventListener('click',()=>{
+  soundOn=!soundOn;
+  try{ ensureAudio(); masterGain.gain.value=soundOn?1:0; }catch(e){}
+  document.getElementById('soundBtn').textContent=soundOn?'🔊':'🔇';
 });
 document.getElementById('skipBtn').addEventListener('click',()=>{
   if(state!=='play') return;
@@ -1268,6 +1469,7 @@ cv.addEventListener('click',e=>{
   // 魔物クリック: 選択/解除
   const m=monsterAt(r,c);
   if(m){
+    if(tut.active&&!tut.mon){ log('sys','(魔物を動かす力はまだ解禁されていない)'); return; }
     if(m.boss){ log('sys',m.name+'「主命により、余は玉座の前から動かぬ」'); return; }
     if(m.ai==='ghost'){ log('sys','ゴーストは実体がなく、掴めない…。'); return; }
     if(selMonster===m){ deselectMonster(); log('sys','移動指示を解除した。'); }
@@ -1298,6 +1500,7 @@ cv.addEventListener('click',e=>{
   // 壁クリック: 直接破壊
   const w=wall[r][c];
   if(WALL_HITS[w]!==undefined){
+    if(tut.active&&!tut.dig){ log('sys','(壁を壊す力はまだ解禁されていない)'); return; }
     if(mp<COSTS.dig){ log('sys','魔王の力が足りない…'); return; }
     wallDmg[r][c]++; spend(COSTS.dig);
     shake(2);
@@ -2027,6 +2230,8 @@ function loop(t){
         maoSay(l[0],l[1]);
       }
     }
+    tutorialUpdate(dt);
+    maoSituational();
     heroUpdate(dt);
     monstersUpdate(dt);
     floatTexts=floatTexts.filter(f=>{ f.t-=dt; return f.t>0; });
@@ -2044,6 +2249,7 @@ document.getElementById('startBtn').addEventListener('click',()=>{
   document.getElementById('overlay').style.display='none';
   state='play';
   beep(523,.08,'sine'); beep(784,.12,'sine');
+  bgmStart();
 });
 requestAnimationFrame(loop);
 </script>
